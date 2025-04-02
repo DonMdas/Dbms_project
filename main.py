@@ -1,8 +1,9 @@
 import sqlite3
 import shlex
+import csv
 
 list_of_privileges = {"admin":["add_user","list_payment_methods","add_payment_method","list_categories","add_category"],
-                      "user":["list_categories","list_payment_methods","add_expense","update_expense","delete_expense","list_expenses"]}
+                      "user":["list_categories","list_payment_methods","add_expense","update_expense","delete_expense","list_expenses","import_expenses", "export_csv"]}
 
 
 
@@ -111,58 +112,73 @@ class ExpenseApp:
                 print(f"- {payement_method[0]}")
 
 
-    def addexpense(self,amount,category,payment_method,date,description,tag,payment_method_details = ""):
-        self.cursor.execute(
-        "INSERT INTO Expense (date, amount, description) VALUES (?, ?, ?)", 
-        (date, amount, description))
-
-        expense_id = self.cursor.lastrowid
-        self.cursor.execute("SELECT category_id FROM Categories WHERE category_name = ?", (category,))
-        result = self.cursor.fetchone()
-        if result is None:
-            print(f"Error: Category '{category}' does not exist. Adding failed!")
-            self.conn.rollback()
-            return  # Stop execution if role is not found
+    def addexpense(self, amount, category, payment_method, date, description, tag, payment_detail_identifier=""):
+        # Try to convert amount to float
+        try:
+            amount = float(amount)
+        except ValueError:
+            print(f"Error: Invalid amount '{amount}'. Must be a number.")
+            return False
         
-        category_id = result[0]  # Extract category_id
-        self.cursor.execute(
-        "INSERT INTO category_expense (category_id,expense_id) VALUES (?, ?)", 
-        (category_id,expense_id))
-        
-        self.cursor.execute("SELECT tag_id FROM Tags WHERE tag_name = ?", (tag,))
-        result = self.cursor.fetchone()
-        if result is None:
+        try:
             self.cursor.execute(
-            "INSERT INTO Tags (tag_name) VALUES (?)", 
-            (tag,))
-            tag_id = self.cursor.lastrowid
-        else:
-            tag_id = result[0]
+            "INSERT INTO Expense (date, amount, description) VALUES (?, ?, ?)", 
+            (date, amount, description))
+
+            expense_id = self.cursor.lastrowid
             
-        self.cursor.execute(
-        "INSERT INTO tag_expense (tag_id,expense_id) VALUES (?, ?)", 
-        (tag_id,expense_id))
-        
-        
-        self.cursor.execute("SELECT payment_method_id FROM Payment_Method WHERE Payment_Method_Name = ?", (payment_method,))
-        result = self.cursor.fetchone()
-        if result is None:
-            print(f"Error: Payment Method '{payment_method}' does not exist. Adding failed!")
+            # Check if category exists
+            self.cursor.execute("SELECT category_id FROM Categories WHERE category_name = ?", (category,))
+            result = self.cursor.fetchone()
+            if result is None:
+                print(f"Error: Category '{category}' does not exist. Adding failed!")
+                self.conn.rollback()
+                return False
+            
+            category_id = result[0]  # Extract category_id
+            self.cursor.execute(
+            "INSERT INTO category_expense (category_id,expense_id) VALUES (?, ?)", 
+            (category_id,expense_id))
+            
+            self.cursor.execute("SELECT tag_id FROM Tags WHERE tag_name = ?", (tag,))
+            result = self.cursor.fetchone()
+            if result is None:
+                self.cursor.execute(
+                "INSERT INTO Tags (tag_name) VALUES (?)", 
+                (tag,))
+                tag_id = self.cursor.lastrowid
+            else:
+                tag_id = result[0]
+                
+            self.cursor.execute(
+            "INSERT INTO tag_expense (tag_id,expense_id) VALUES (?, ?)", 
+            (tag_id,expense_id))
+            
+            
+            self.cursor.execute("SELECT payment_method_id FROM Payment_Method WHERE Payment_Method_Name = ?", (payment_method,))
+            result = self.cursor.fetchone()
+            if result is None:
+                print(f"Error: Payment Method '{payment_method}' does not exist. Adding failed!")
+                self.conn.rollback()
+                return False
+            
+            payment_method_id = result[0]  # Extract payment_method_id
+            self.cursor.execute(
+            "INSERT INTO payment_method_expense(payment_method_id,expense_id,payment_detail_identifier) VALUES (?, ?,?)", 
+            (payment_method_id,expense_id,payment_detail_identifier))
+            
+            self.cursor.execute(
+            "INSERT INTO user_expense(username,expense_id) VALUES (?, ?)", 
+            (self.current_user,expense_id))
+            
+            self.conn.commit()
+            print("Expense Added Successfully")
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Database error adding expense: {e}")
             self.conn.rollback()
-            return  # Stop execution if role is not found
-        
-        payment_method_id = result[0]  # Extract payment_method_id
-        self.cursor.execute(
-        "INSERT INTO payment_method_expense(payment_method_id,expense_id,payment_detail_identifier) VALUES (?, ?,?)", 
-        (payment_method_id,expense_id,payment_method_details))
-        
-        self.cursor.execute(
-        "INSERT INTO user_expense(username,expense_id) VALUES (?, ?)", 
-        (self.current_user,expense_id))
-        
-        self.conn.commit()
-        print("Expense Added Successfully")
-        
+            return False
     
     def update_expense(self, expense_id, field, new_value):
         self.cursor.execute("SELECT COUNT(*) FROM user_expense WHERE expense_id = ? AND username = ?", (expense_id, self.current_user))
@@ -356,6 +372,90 @@ class ExpenseApp:
             self.conn.rollback()
         except Exception as e:
             print(f"Error listing expenses: {e}")
+            
+    def import_expenses(self, file_path):
+        try:
+            with open(file_path, newline="") as csvfile:
+                reader = csv.reader(csvfile)
+                header = next(reader)
+                expected_header = ["amount", "category", "payment_method", "date", "description", "tag","payment_detail_identifier"]
+                if [col.strip().lower() for col in header] != expected_header:
+                    print("Error: CSV header does not match expected format.")
+                    return
+                    
+                success_count = 0
+                error_count = 0
+                
+                for i, row in enumerate(reader, 2):  # Start counting from line 2 (after header)
+                    if len(row) < 6:
+                        print(f"Skipping row {i}: Incorrect number of fields.")
+                        error_count += 1
+                        continue
+                        
+                    amount, category, payment_method, date, description, tag = row[:6]
+                    payment_detail_identifier = ""
+                    if len(row) == 7:
+                        payment_detail_identifier = row[6]
+                        
+                    # Call addexpense and check return value
+                    result = self.addexpense(amount, category.strip().lower(), payment_method.strip().lower(),
+                                            date, description, tag.strip().lower(), payment_detail_identifier)
+                    if result:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                        print(f"Failed to import row {i}")
+                        
+                print(f"Import complete: {success_count} successful, {error_count} failed.")
+                
+        except FileNotFoundError:
+            print(f"Error: File '{file_path}' not found.")
+        except Exception as e:
+            print(f"Error while importing CSV: {e}")
+
+    def export_csv(self, file_path, sort_field):
+        # Mapping allowed sort fields to actual SQL columns
+        sort_fields = {
+            "amount": "e.amount",
+            "category": "c.category_name",
+            "payment_method": "pm.payment_method_name",
+            "date": "e.date",
+            "description": "e.description",
+            "tag": "t.tag_name",
+            "payment_detail_identifier": "pme.payment_detail_identifier"
+        }
+        if sort_field not in sort_fields:
+            print("Error: Invalid sort field.")
+            return
+
+        query = f"""
+            SELECT e.amount, c.category_name, pm.payment_method_name, e.date, e.description, t.tag_name, pme.payment_detail_identifier
+            FROM Expense e
+            JOIN category_expense ce ON e.expense_id = ce.expense_id
+            JOIN Categories c ON ce.category_id = c.category_id
+            JOIN payment_method_expense pme ON e.expense_id = pme.expense_id
+            JOIN Payment_Method pm ON pme.payment_method_id = pm.payment_method_id
+            JOIN tag_expense te ON e.expense_id = te.expense_id
+            JOIN Tags t ON te.tag_id = t.tag_id
+            ORDER BY {sort_fields[sort_field]}
+        """
+        self.cursor.execute(query)
+        rows = self.cursor.fetchall()
+
+        if not rows:
+            print("No expenses found to export.")
+            return
+
+        try:
+            with open(file_path, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                # Write header row
+                writer.writerow(["amount", "category", "payment_method", "date", "description", "tag", "payment_detail_identifier"])
+                for row in rows:
+                    writer.writerow(row)
+            print(f"Exported expenses successfully to {file_path}.")
+        except Exception as e:
+            print(f"Error while exporting CSV: {e}")
     
     def parser(self, cmd_str):
         cmd_str = cmd_str.strip()
@@ -459,15 +559,15 @@ class ExpenseApp:
                 date_txt = cmd_str_lst[4]
                 description = cmd_str_lst[5]
                 tag_name = cmd_str_lst[-1]
-                payment_method_details = ""
+                payment_detail_identifier = ""
                 choice = input("Would you like to add payment method details?(y/n) [Type more to display more info]: ")
                 if choice.lower() == "more":
                     print("This detail can be used by the used by the user to generate reports based on specific payment method")
                     print("The details will be masked")
                     choice = input("Would you like to add payment method details?(y/n): ")
                 if choice.lower() == "y":
-                    payment_method_details = input("Enter the details: ")
-                self.addexpense(amount, category_name, payment_method_name, date_txt, description, tag_name, payment_method_details)    
+                    payment_detail_identifier = input("Enter the details: ")
+                self.addexpense(amount, category_name, payment_method_name, date_txt, description, tag_name, payment_detail_identifier)    
                 
             else:
                 print("Error: Insufficient no of arguments!!")
@@ -521,6 +621,23 @@ class ExpenseApp:
             else:
                 self.list_expenses()
                     
+        elif cmd == "import_expenses":
+            if len(cmd_str_lst) != 2:
+                print("Error: Provide CSV file path")
+                print("Usage: import_expenses <file_path>")
+            else:
+                file_path = cmd_str_lst[1]
+                self.import_expenses(file_path)
+
+        elif cmd == "export_csv":
+            if len(cmd_str_lst) != 3:
+                print("Error: Insufficient arguments")
+                print("Usage: export_csv <file_path> <sort_field>")
+                print("Valid sort fields: amount, category, payment_method, date, description, tag")
+            else:
+                file_path = cmd_str_lst[1]
+                sort_field = cmd_str_lst[2].lower()
+                self.export_csv(file_path, sort_field)
                 
         else:
             print("Error: Invalid command")
