@@ -36,7 +36,8 @@ list_of_privileges = {
             "monthly_category_spending": "report monthly_category_spending",
             "payment_method_usage": "report payment_method_usage",
             "frequent_category": "report frequent_category",
-            "tag_expenses": "report tag_expenses"
+            "tag_expenses": "report tag_expenses",
+            "payment_method_details_expense": "report payment_method_details_expense"
         }
     }
 }

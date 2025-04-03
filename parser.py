@@ -176,21 +176,39 @@ class CommandParser:
                 "month": []
             }
             
-            field_op = ["<",">","=","<=",">="]
+            field_op = ["<=",">=","=","<",">"]
             if len(cmd_str_lst) > 1:
-                constraint_list = cmd_str[len(cmd):].split(',')
+                # Extract the part after the command
+                filter_part = cmd_str[len(cmd):].strip()
+                # Split by comma to get individual constraints
+                constraint_list = filter_part.split(',')
+                
                 for constraint in constraint_list:
-                    constraint = shlex.split(constraint)
-                    if len(constraint) != 3:
-                        print("Error : Filter Incomplete!!")
-                        return
-                    if constraint[0] not in field_dict:
-                        print("Error : Invalid Filter !!")
-                        return
-                    if constraint[1] not in field_op:
-                        print("Error : Invalid Operator for filter!!")
+                    constraint = constraint.strip()
+                    operator_found = False
                     
-                    field_dict[constraint[0]].append([constraint[1], constraint[2]])
+                    # Try each operator to see if it exists in the constraint
+                    for op in field_op:
+                        if op in constraint:
+                            # Split by operator
+                            parts = constraint.split(op, 1)  # Split only on first occurrence
+                            if len(parts) == 2:
+                                field = parts[0].strip()
+                                value = parts[1].strip()
+                                
+                                # Validate field
+                                if field not in field_dict:
+                                    print(f"Error: Invalid field '{field}'")
+                                    return
+                                
+                                # Add to field_dict
+                                field_dict[field].append([op, value])
+                                operator_found = True
+                                break
+                    
+                    if not operator_found:
+                        print(f"Error: No valid operator found in filter '{constraint}'")
+                        return
                 
                 self.expense_manager.list_expenses(field_dict, self.user_manager.privileges)
             else:
@@ -318,6 +336,12 @@ class CommandParser:
                     print("Error: No additional arguments required")
                 else:
                     self.report_manager.generate_report_tag_expenses()
+                    
+            elif report_type == "payment_method_details_expense":
+                if len(cmd_str_lst) != 2:
+                    print("Error: No additional arguments required")
+                else:
+                    self.report_manager.generate_report_payment_method_details_expense()
 
         else:
             print("Error: Invalid command")
