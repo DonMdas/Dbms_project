@@ -10,7 +10,7 @@ list_of_privileges = {
         "list_categories": "list_categories",
         "add_category": "add_category <category_name>",
         "list_users": "list_users",
-        "help":"help"
+        "list_expenses": "list_expenses [<field> <operator> <value>, ...]"
     },
     "user": {
         "list_categories": "list_categories",
@@ -20,8 +20,7 @@ list_of_privileges = {
         "delete_expense": "delete_expense <expense_id>",
         "list_expenses": "list_expenses [<field> <operator> <value>, ...]",
         "import_expenses": "import_expenses <file_path>",
-        "export_csv": "export_csv <file_path> [, sort-on <field_name>]",
-        "help":"help"
+        "export_csv": "export_csv <file_path> [, sort-on <field_name>]"
     }
 }
 
@@ -291,7 +290,7 @@ class ExpenseApp:
             # Initial query to connect all required tables
             query = """
             SELECT e.expense_id, e.date, e.amount, e.description, 
-                c.category_name, t.tag_name, pm.payment_method_name
+                c.category_name, t.tag_name, pm.payment_method_name, ue.username
             FROM Expense e
             LEFT JOIN category_expense ce ON e.expense_id = ce.expense_id
             LEFT JOIN Categories c ON ce.category_id = c.category_id
@@ -299,11 +298,23 @@ class ExpenseApp:
             LEFT JOIN Tags t ON te.tag_id = t.tag_id
             LEFT JOIN payment_method_expense pme ON e.expense_id = pme.expense_id
             LEFT JOIN Payment_Method pm ON pme.payment_method_id = pm.payment_method_id
-            WHERE e.expense_id IN (
-                SELECT expense_id FROM user_expense WHERE username = ?
-            )
+            LEFT JOIN user_expense ue ON e.expense_id = ue.expense_id
             """
-            params = [self.current_user]
+            
+            params = []
+            
+            # Check if current user is admin or regular user
+            if self.privileges == "admin":
+                # Admin can see all expenses - no username filter needed
+                pass
+            else:
+                # Regular user can only see their own expenses
+                query += """
+                WHERE e.expense_id IN (
+                    SELECT expense_id FROM user_expense WHERE username = ?
+                )
+                """
+                params.append(self.current_user)
             
             # Define operation fields
             op_fields = {"and": ["amount", "date"], 
@@ -328,7 +339,8 @@ class ExpenseApp:
                     
                 # Special handling for month
                 if field == "month":
-                    query += " AND ("
+                    connector = "WHERE" if "WHERE" not in query else "AND"
+                    query += f" {connector} ("
                     first = True
                     for constraint in filters[field]:
                         op_type, value = constraint
@@ -363,7 +375,8 @@ class ExpenseApp:
                 
                 db_field = field_mapping.get(field, field)
                 
-                query += " AND ("
+                connector = "WHERE" if "WHERE" not in query else "AND"
+                query += f" {connector} ("
                 first = True
                 for constraint in filters[field]:
                     op_type, value = constraint
@@ -384,21 +397,39 @@ class ExpenseApp:
             
             # Display results in a formatted table
             print("\nExpense List:")
-            print("-" * 80)
-            print(f"{'ID':<5} {'Date':<12} {'Amount':<10} {'Category':<15} {'Tag':<15} {'Payment Method':<15} {'Description':<30}")
-            print("-" * 80)
+            print("-" * 95)
             
-            for expense in expenses:
-                expense_id, date, amount, description, category, tag, payment_method = expense
-                # Handle NULL values from LEFT JOINs
-                category = category or "N/A"
-                tag = tag or "N/A"
-                payment_method = payment_method or "N/A"
-                description = (description[:27] + "...") if description and len(description) > 30 else (description or "")
+            # Add username column for admin view
+            if self.privileges == "admin":
+                print(f"{'ID':<5} {'Date':<12} {'Amount':<10} {'Category':<15} {'Tag':<15} {'Payment Method':<15} {'Username':<10} {'Description':<25}")
+                print("-" * 95)
                 
-                print(f"{expense_id:<5} {date:<12} {amount:<10.2f} {category:<15} {tag:<15} {payment_method:<15} {description:<30}")
+                for expense in expenses:
+                    expense_id, date, amount, description, category, tag, payment_method, username = expense
+                    # Handle NULL values from LEFT JOINs
+                    category = category or "N/A"
+                    tag = tag or "N/A"
+                    payment_method = payment_method or "N/A"
+                    username = username or "N/A"
+                    description = (description[:22] + "...") if description and len(description) > 25 else (description or "")
+                    
+                    print(f"{expense_id:<5} {date:<12} {amount:<10.2f} {category:<15} {tag:<15} {payment_method:<15} {username:<10} {description:<25}")
+            else:
+                # Original display for regular users
+                print(f"{'ID':<5} {'Date':<12} {'Amount':<10} {'Category':<15} {'Tag':<15} {'Payment Method':<15} {'Description':<30}")
+                print("-" * 95)
+                
+                for expense in expenses:
+                    expense_id, date, amount, description, category, tag, payment_method, _ = expense
+                    # Handle NULL values from LEFT JOINs
+                    category = category or "N/A"
+                    tag = tag or "N/A"
+                    payment_method = payment_method or "N/A"
+                    description = (description[:27] + "...") if description and len(description) > 30 else (description or "")
+                    
+                    print(f"{expense_id:<5} {date:<12} {amount:<10.2f} {category:<15} {tag:<15} {payment_method:<15} {description:<30}")
             
-            print("-" * 80)
+            print("-" * 95)
             print(f"Total: {len(expenses)} expense(s) found")
             
         except sqlite3.Error as e:
