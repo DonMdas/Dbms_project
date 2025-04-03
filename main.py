@@ -20,7 +20,7 @@ list_of_privileges = {
         "delete_expense": "delete_expense <expense_id>",
         "list_expenses": "list_expenses [<field> <operator> <value>, ...]",
         "import_expenses": "import_expenses <file_path>",
-        "export_csv": "export_csv <file_path> <sort_field>",
+        "export_csv": "export_csv <file_path> [, sort-on <field_name>]",
         "help":"help"
     }
 }
@@ -447,7 +447,7 @@ class ExpenseApp:
         except Exception as e:
             print(f"Error while importing CSV: {e}")
 
-    def export_csv(self, file_path, sort_field):
+    def export_csv(self, file_path, sort_field=None):
         # Mapping allowed sort fields to actual SQL columns
         sort_fields = {
             "amount": "e.amount",
@@ -458,11 +458,8 @@ class ExpenseApp:
             "tag": "t.tag_name",
             "payment_detail_identifier": "pme.payment_detail_identifier"
         }
-        if sort_field not in sort_fields:
-            print("Error: Invalid sort field.")
-            return
-
-        query = f"""
+        
+        query = """
             SELECT e.amount,
                 c.category_name,
                 pm.payment_method_name,
@@ -477,8 +474,15 @@ class ExpenseApp:
             JOIN Payment_Method pm ON pme.payment_method_id = pm.payment_method_id
             JOIN tag_expense te ON e.expense_id = te.expense_id
             JOIN Tags t ON te.tag_id = t.tag_id
-            ORDER BY {sort_fields[sort_field]}
         """
+        
+        # Add sorting only if sort_field is provided and valid
+        if sort_field:
+            if sort_field not in sort_fields:
+                print("Error: Invalid sort field.")
+                return
+            query += f" ORDER BY {sort_fields[sort_field]}"
+
         self.cursor.execute(query)
         rows = self.cursor.fetchall()
 
@@ -615,15 +619,21 @@ class ExpenseApp:
                 payment_method_name = cmd_str_lst[1]
                 self.add_payment_method(payment_method_name)
 
-        # Handling addexpense (To be implemented)
+        # Handling addexpense
         elif cmd == "add_expense":
-            if len(cmd_str_lst) >= 7:
+            if len(cmd_str_lst) == 6 or len(cmd_str_lst) == 7 :  #  description is optional. Therefore 6 arguments are also fine
                 amount = cmd_str_lst[1]
                 category_name = cmd_str_lst[2]
                 payment_method_name = cmd_str_lst[3]
                 date_txt = cmd_str_lst[4]
-                description = cmd_str_lst[5]
                 tag_name = cmd_str_lst[-1]
+                
+                # Handle optional description
+                if len(cmd_str_lst) == 6:  # No description provided
+                    description = ""
+                else:  # Description is provided
+                    description = cmd_str_lst[5]
+                    
                 payment_detail_identifier = ""
                 choice = input("Would you like to add payment method details?(y/n) [Type more to display more info]: ")
                 if choice.lower() == "more":
@@ -694,12 +704,31 @@ class ExpenseApp:
                 self.import_expenses(file_path)
 
         elif cmd == "export_csv":
-            if len(cmd_str_lst) != 3:
+            # Split by comma to check for optional sort-on parameter
+            parts = cmd_str.strip().split(',', 1)
+            export_cmd = parts[0].strip()
+            cmd_parts = shlex.split(export_cmd)
+            
+            if len(cmd_parts) != 2:
                 print(f"Error: Incorrect syntax. Usage: {list_of_privileges['user']['export_csv']}")
-            else:
-                file_path = cmd_str_lst[1]
-                sort_field = cmd_str_lst[2].lower()
+                return
+            
+            file_path =  cmd_parts[1]
+            
+            # Check for optional sort-on parameter
+            if len(parts) > 1:
+                sort_part = parts[1].strip()
+                sort_parts = shlex.split(sort_part)
+                
+                if len(sort_parts) != 2 or sort_parts[0].lower() != "sort-on":
+                    print(f"Error: Incorrect syntax. Usage: {list_of_privileges['user']['export_csv']}")
+                    return
+                    
+                sort_field = sort_parts[1].lower()
                 self.export_csv(file_path, sort_field)
+            else:
+                # No sorting specified
+                self.export_csv(file_path)
                 
         # Handling list_users (Admin only)
         elif cmd == "list_users":
