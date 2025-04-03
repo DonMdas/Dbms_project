@@ -707,13 +707,26 @@ class ExpenseApp:
             # Split by comma to check for optional sort-on parameter
             parts = cmd_str.strip().split(',', 1)
             export_cmd = parts[0].strip()
-            cmd_parts = shlex.split(export_cmd)
             
-            if len(cmd_parts) != 2:
+            # Get file path based on whether it's quoted or not
+            if '"' in export_cmd or "'" in export_cmd:
+                # If quoted, use shlex for proper quote handling
+                cmd_parts = shlex.split(export_cmd)
+                if len(cmd_parts) < 2:
+                    print(f"Error: Incorrect syntax. Usage: {list_of_privileges['user']['export_csv']}")
+                    return
+                file_path = cmd_parts[1]
+            else:
+                # If not quoted, use string slicing approach
+                if export_cmd.startswith("export_csv "):
+                    file_path = export_cmd[len("export_csv "):].strip()
+                else:
+                    print(f"Error: Incorrect syntax. Usage: {list_of_privileges['user']['export_csv']}")
+                    return
+            
+            if not file_path:
                 print(f"Error: Incorrect syntax. Usage: {list_of_privileges['user']['export_csv']}")
                 return
-            
-            file_path =  cmd_parts[1]
             
             # Check for optional sort-on parameter
             if len(parts) > 1:
