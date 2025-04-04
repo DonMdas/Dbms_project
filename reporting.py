@@ -456,3 +456,559 @@ class ReportManager:
             return '*' * len(details)
         else:
             return details[0:2] + '*' * (len(details) - 4) + details[-2:]
+    
+    def generate_report_payment_method_usage(self):
+        """Report spending breakdown by payment method (user only)"""
+        if self.privileges == "admin":
+            print("Error: Payment method details are not available for administrators.")
+            return
+            
+        try:
+            query = """
+            SELECT pm.payment_method_name, COUNT(pme.expense_id) as usage_count, 
+                   SUM(e.amount) as total_amount
+            FROM Payment_Method pm
+            JOIN payment_method_expense pme ON pm.payment_method_id = pme.payment_method_id
+            JOIN Expense e ON pme.expense_id = e.expense_id
+            JOIN user_expense ue ON e.expense_id = ue.expense_id
+            WHERE ue.username = ?
+            GROUP BY pm.payment_method_name
+            ORDER BY total_amount DESC
+            """
+            
+            self.cursor.execute(query, (self.current_user,))
+            results = self.cursor.fetchall()
+            
+            if not results:
+                print("No payment method usage data available.")
+                return
+                
+            # Display results
+            print("\nPayment Method Usage Report:")
+            print("-" * 60)
+            print(f"{'Payment Method':<20} {'Usage Count':<15} {'Total Amount':<15} {'Avg Amount':<15}")
+            print("-" * 60)
+            
+            for method, count, total in results:
+                avg_amount = total / count
+                print(f"{method:<20} {count:<15} {total:<15.2f} {avg_amount:<15.2f}")
+                
+            print("-" * 60)
+            
+            # Create a pie chart
+            if results:
+                plt.figure(figsize=(10, 8))
+                
+                # Extract data for plotting
+                methods = [result[0] for result in results]
+                amounts = [result[2] for result in results]
+                
+                # Create pie chart
+                plt.pie(amounts, labels=methods, autopct='%1.1f%%', startangle=90, shadow=True)
+                plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
+                plt.title('Spending by Payment Method')
+                plt.tight_layout()
+                
+                plt.show(block=False)
+                plt.pause(0.001)
+                
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating report: {e}")
+    
+    def generate_report_frequent_category(self):
+        """Report the most frequently used expense category"""
+        try:
+            # Base query
+            query = """
+            SELECT c.category_name, COUNT(ce.expense_id) as usage_count, SUM(e.amount) as total_amount
+            FROM Categories c
+            JOIN category_expense ce ON c.category_id = ce.category_id
+            JOIN Expense e ON ce.expense_id = e.expense_id
+            JOIN user_expense ue ON e.expense_id = ue.expense_id
+            """
+            
+            params = []
+            
+            # Apply user filtering for regular users
+            if self.privileges != "admin":
+                query += " WHERE ue.username = ?"
+                params.append(self.current_user)
+                
+            query += " GROUP BY c.category_name ORDER BY usage_count DESC"
+            
+            self.cursor.execute(query, params)
+            results = self.cursor.fetchall()
+            
+            if not results:
+                print("No expenses found to generate frequent category report.")
+                return
+                
+            # Display results
+            print("\nCategory Usage Report:")
+            print("-" * 60)
+            print(f"{'Category':<20} {'Usage Count':<15} {'Total Amount':<15} {'Avg Amount':<15}")
+            print("-" * 60)
+            
+            for category, count, total in results:
+                avg_amount = total / count
+                print(f"{category:<20} {count:<15} {total:<15.2f} {avg_amount:<15.2f}")
+                
+            print("-" * 60)
+            print(f"Most frequently used category: {results[0][0]} ({results[0][1]} uses)")
+            
+            # Create a horizontal bar chart
+            if len(results) > 0:
+                plt.figure(figsize=(10, max(6, len(results) * 0.4)))
+                
+                # Extract data for plotting
+                categories = [result[0] for result in results]
+                counts = [result[1] for result in results]
+                
+                # Sort data for better visualization
+                categories.reverse()
+                counts.reverse()
+                
+                # Create horizontal bar chart
+                bars = plt.barh(categories, counts, color='purple')
+                
+                # Add count labels
+                for i, v in enumerate(counts):
+                    plt.text(v + 0.5, i, str(v), va='center')
+                
+                plt.xlabel('Usage Count')
+                plt.title('Category Usage Frequency')
+                plt.tight_layout()
+                
+                plt.show(block=False)
+                plt.pause(0.001)
+                
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating report: {e}")
+
+    def generate_report_highest_spender_per_month(self):
+        """Report the user with highest spending for each month (admin only)"""
+        if self.privileges != "admin":
+            print("Error: This report is only available for administrators.")
+            return
+            
+        try:
+            query = """
+            WITH MonthlyUserSpending AS (
+                SELECT 
+                    strftime('%Y-%m', e.date) as month,
+                    ue.username,
+                    SUM(e.amount) as total_spending
+                FROM Expense e
+                JOIN user_expense ue ON e.expense_id = ue.expense_id
+                GROUP BY month, ue.username
+            ),
+            RankedSpending AS (
+                SELECT 
+                    month,
+                    username,
+                    total_spending,
+                    RANK() OVER (PARTITION BY month ORDER BY total_spending DESC) as spending_rank
+                FROM MonthlyUserSpending
+            )
+            SELECT 
+                month,
+                username,
+                total_spending
+            FROM RankedSpending
+            WHERE spending_rank = 1
+            ORDER BY month
+            """
+            
+            self.cursor.execute(query)
+            results = self.cursor.fetchall()
+            
+            if not results:
+                print("No data available to generate highest spender report.")
+                return
+                
+            # Display results in table format
+            print("\nHighest Spender per Month:")
+            print("-" * 50)
+            print(f"{'Month':<15} {'Username':<20} {'Total Spending':<15}")
+            print("-" * 50)
+            
+            for month, username, total in results:
+                print(f"{month:<15} {username:<20} {total:<15.2f}")
+                
+            print("-" * 50)
+            
+            # Create enhanced visualization
+            plt.figure(figsize=(14, 8))
+            
+            # Extract data for plotting
+            months = [result[0] for result in results]
+            amounts = [result[2] for result in results]
+            usernames = [result[1] for result in results]
+            
+            # Create a custom colormap with gradient for visual appeal
+            unique_users = list(set(usernames))
+            cmap = plt.cm.viridis
+            colors = cmap(np.linspace(0.1, 0.9, len(unique_users)))
+            user_colors = {user: colors[i] for i, user in enumerate(unique_users)}
+            
+            # Plot the bars with enhanced styling
+            bars = plt.bar(
+                months, 
+                amounts, 
+                color=[user_colors[user] for user in usernames],
+                width=0.6,
+                edgecolor='white',
+                linewidth=1.5,
+                alpha=0.8
+            )
+            
+            # Add annotations for each bar
+            for bar, username, amount in zip(bars, usernames, amounts):
+                # Username at the top of the bar
+                plt.text(
+                    bar.get_x() + bar.get_width()/2, 
+                    bar.get_height() + (max(amounts) * 0.03), 
+                    username,
+                    ha='center',
+                    fontsize=10,
+                    fontweight='bold'
+                )
+                
+                # Amount inside the bar
+                plt.text(
+                    bar.get_x() + bar.get_width()/2,
+                    bar.get_height()/2,
+                    f'${amount:.2f}',
+                    ha='center',
+                    va='center',
+                    fontsize=9,
+                    fontweight='bold',
+                    color='white'
+                )
+            
+            # Enhance the plot styling
+            plt.xlabel('Month', fontsize=12, fontweight='bold')
+            plt.ylabel('Total Spending ($)', fontsize=12, fontweight='bold')
+            plt.title('Highest Spender Per Month', fontsize=16, fontweight='bold', pad=20)
+            
+            # Add a subtle grid for easier reading
+            plt.grid(axis='y', linestyle='--', alpha=0.3)
+            
+            # Style the axis
+            plt.xticks(rotation=45, fontsize=10)
+            plt.yticks(fontsize=10)
+            
+            # Create legend for users
+            from matplotlib.patches import Patch
+            legend_elements = [Patch(facecolor=user_colors[user], label=user, edgecolor='white', linewidth=1) 
+                              for user in unique_users]
+            plt.legend(
+                handles=legend_elements, 
+                title="Users", 
+                title_fontsize=12,
+                loc='upper right',
+                frameon=True,
+                framealpha=0.95,
+                edgecolor='lightgray'
+            )
+            
+            # Add a note about the data
+            plt.figtext(
+                0.5, 0.01, 
+                "Note: Shows only the top spender for each month", 
+                ha='center', fontsize=9, fontstyle='italic'
+            )
+            
+            plt.tight_layout()
+            plt.show(block=False)
+            plt.pause(0.001)
+                
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating report: {e}")
+    
+    def generate_report_monthly_category_spending(self):
+        """Report total spending per category for each month"""
+        try:
+            # Base query
+            query = """
+            SELECT strftime('%Y-%m', e.date) as month, 
+                   c.category_name, 
+                   SUM(e.amount) as total,
+                   COUNT(e.expense_id) as count
+            FROM Expense e
+            JOIN category_expense ce ON e.expense_id = ce.expense_id
+            JOIN Categories c ON ce.category_id = c.category_id
+            JOIN user_expense ue ON e.expense_id = ue.expense_id
+            """
+            
+            params = []
+            
+            # Apply user filtering for regular users
+            if self.privileges != "admin":
+                query += " WHERE ue.username = ?"
+                params.append(self.current_user)
+                
+            query += " GROUP BY month, c.category_name ORDER BY month, total DESC"
+            
+            self.cursor.execute(query, params)
+            results = self.cursor.fetchall()
+            
+            if not results:
+                print("No expenses found to generate monthly category spending report.")
+                return
+                
+            # Organize data by month
+            months = {}
+            for month, category, total, count in results:
+                if month not in months:
+                    months[month] = []
+                months[month].append((category, total, count))
+                
+            # Display results
+            print("\nMonthly Category Spending Report:")
+            
+            for month in sorted(months.keys()):
+                print(f"\n{month} Breakdown:")
+                print("-" * 60)
+                print(f"{'Category':<20} {'Amount':<15} {'Count':<10} {'Avg per Expense':<15}")
+                print("-" * 60)
+                
+                month_total = 0
+                for category, total, count in months[month]:
+                    avg_per_expense = total / count
+                    month_total += total
+                    print(f"{category:<20} {total:<15.2f} {count:<10} {avg_per_expense:<15.2f}")
+                    
+                print("-" * 60)
+                print(f"Month Total: {month_total:.2f}")
+                
+            # Create a stacked bar chart
+            plt.figure(figsize=(14, 8))
+            
+            # Get unique months and categories
+            all_months = sorted(months.keys())
+            all_categories = sorted(set(category for month_data in months.values() 
+                                   for category, _, _ in month_data))
+            
+            # Create data structure for plotting
+            data = {}
+            for category in all_categories:
+                data[category] = []
+                for month in all_months:
+                    amount = next((total for cat, total, _ in months[month] if cat == category), 0)
+                    data[category].append(amount)
+            
+            # Create the stacked bar chart
+            bottom = np.zeros(len(all_months))
+            for category in all_categories:
+                plt.bar(all_months, data[category], bottom=bottom, label=category)
+                bottom += np.array(data[category])
+            
+            plt.xlabel('Month')
+            plt.ylabel('Amount')
+            plt.title('Monthly Spending by Category')
+            plt.legend(title='Categories', bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            
+            plt.show(block=False)
+            plt.pause(0.001)
+            
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating report: {e}")
+    
+    
+    def generate_report_above_average_expenses(self):
+        """Report expenses that are above the category average, grouped by category"""
+        try:
+            # Subquery to get category averages - keep this part the same
+            query = """
+            WITH CategoryAverages AS (
+                SELECT ce.category_id, c.category_name, AVG(e.amount) as avg_amount
+                FROM category_expense ce
+                JOIN Expense e ON ce.expense_id = e.expense_id
+                JOIN Categories c ON ce.category_id = c.category_id
+                JOIN user_expense ue ON e.expense_id = ue.expense_id
+            """
+            
+            params = []
+            
+            # Apply user filtering for regular users
+            if self.privileges != "admin":
+                query += " WHERE ue.username = ?"
+                params.append(self.current_user)
+                
+            query += """
+                GROUP BY ce.category_id
+            )
+            SELECT e.expense_id, e.date, e.amount, e.description, 
+                   c.category_name, ca.avg_amount, t.tag_name, 
+                   pm.payment_method_name, ue.username
+            FROM Expense e
+            JOIN category_expense ce ON e.expense_id = ce.expense_id
+            JOIN Categories c ON ce.category_id = c.category_id
+            JOIN CategoryAverages ca ON ce.category_id = ca.category_id
+            LEFT JOIN tag_expense te ON e.expense_id = te.expense_id
+            LEFT JOIN Tags t ON te.tag_id = t.tag_id
+            LEFT JOIN payment_method_expense pme ON e.expense_id = pme.expense_id
+            LEFT JOIN Payment_Method pm ON pme.payment_method_id = pm.payment_method_id
+            JOIN user_expense ue ON e.expense_id = ue.expense_id
+            WHERE e.amount > ca.avg_amount
+            """
+            
+            # Additional filtering for regular users
+            if self.privileges != "admin":
+                query += " AND ue.username = ?"
+                params.append(self.current_user)
+                
+            # No ORDER BY in main query - we'll sort by category and diff% later
+            
+            self.cursor.execute(query, params)
+            expenses = self.cursor.fetchall()
+            
+            if not expenses:
+                print("No above-average expenses found.")
+                return
+            
+            # Organize results by category
+            category_expenses = {}
+            
+            for expense in expenses:
+                expense_id, date, amount, description, category, avg_amount, tag, payment_method, username = expense
+                # Calculate percentage difference
+                percentage_diff = ((amount - avg_amount) / avg_amount) * 100
+                
+                # Add percentage diff to the expense data
+                expense_with_diff = expense + (percentage_diff,)
+                
+                if category not in category_expenses:
+                    category_expenses[category] = []
+                category_expenses[category].append(expense_with_diff)
+            
+            # Sort each category's expenses by percentage diff (descending)
+            for category in category_expenses:
+                category_expenses[category].sort(key=lambda x: x[9], reverse=True)
+            
+            # Display results by category
+            print("\nExpenses Above Category Average (By Category):")
+            
+            # Get total count for summary
+            total_above_avg = 0
+            
+            # Display a table for each category
+            for category in sorted(category_expenses.keys()):
+                cat_expenses = category_expenses[category]
+                total_above_avg += len(cat_expenses)
+                
+                print(f"\n{category.upper()} CATEGORY:")
+                print("-" * 110)
+                
+                # Different headers based on user role
+                if self.privileges == "admin":
+                    print(f"{'ID':<5} {'Date':<12} {'Amount':<10} {'Avg Amount':<12} {'Diff %':<10} {'Username':<12} {'Description':<25}")
+                    print("-" * 110)
+                    
+                    for expense in cat_expenses:
+                        expense_id, date, amount, description, _, avg_amount, _, _, username, percentage_diff = expense
+                        description = (description[:22] + "...") if description and len(description) > 25 else (description or "")
+                        
+                        print(f"{expense_id:<5} {date:<12} {amount:<10.2f} {avg_amount:<12.2f} {percentage_diff:>+10.2f}% {username:<12} {description:<25}")
+                else:
+                    print(f"{'ID':<5} {'Date':<12} {'Amount':<10} {'Avg Amount':<12} {'Diff %':<10} {'Payment Method':<15} {'Description':<25}")
+                    print("-" * 110)
+                    
+                    for expense in cat_expenses:
+                        expense_id, date, amount, description, _, avg_amount, _, payment_method, _, percentage_diff = expense
+                        description = (description[:22] + "...") if description and len(description) > 25 else (description or "")
+                        
+                        print(f"{expense_id:<5} {date:<12} {amount:<10.2f} {avg_amount:<12.2f} {percentage_diff:>+10.2f}% {payment_method:<15} {description:<25}")
+                
+                print("-" * 110)
+                print(f"Category total: {len(cat_expenses)} expense(s) above average")
+            
+            # Display overall summary
+            print("\nSUMMARY:")
+            print("-" * 60)
+            print(f"Total: {total_above_avg} expense(s) above their category average")
+            print(f"Categories with above-average expenses: {len(category_expenses)}")
+            
+            # Create visualization showing expenses by category
+            if category_expenses:
+                plt.figure(figsize=(14, 10))
+                
+                # Create a scatter plot with categories on x-axis
+                all_categories = list(category_expenses.keys())
+                category_indices = {cat: i for i, cat in enumerate(all_categories)}
+                
+                # Plot points for each expense
+                x_values = []
+                y_values = []
+                sizes = []
+                colors = []
+                annotations = []
+                
+                # Color map for percentage differences
+                cmap = plt.cm.get_cmap('RdYlGn_r')
+                
+                for cat, expenses in category_expenses.items():
+                    cat_idx = category_indices[cat]
+                    for exp in expenses:
+                        amount = exp[2]
+                        avg = exp[5]
+                        diff_pct = exp[9]
+                        
+                        # Add jitter to x position to avoid overlapping points
+                        jitter = (np.random.random() - 0.5) * 0.3
+                        x_values.append(cat_idx + jitter)
+                        y_values.append(amount)
+                        
+                        # Size based on amount
+                        sizes.append(50 + (amount/max(exp[2] for exp in expenses)) * 100)
+                        
+                        # Color based on percentage difference (normalize to 0-1 range)
+                        norm_diff = min(1.0, diff_pct / 200)  # Cap at 200% difference
+                        colors.append(cmap(norm_diff))
+                        
+                        # Annotation with expense ID and diff%
+                        annotations.append(f"ID:{exp[0]}\n+{diff_pct:.1f}%")
+                
+                # Draw scatter plot
+                scatter = plt.scatter(x_values, y_values, s=sizes, c=colors, alpha=0.7)
+                
+                # Draw category average lines
+                for cat, expenses in category_expenses.items():
+                    cat_idx = category_indices[cat]
+                    avg = expenses[0][5]  # All expenses in a category have the same average
+                    plt.hlines(avg, cat_idx - 0.4, cat_idx + 0.4, colors='blue', linestyles='dashed', 
+                               label='Category Average' if cat == list(category_expenses.keys())[0] else "")
+                
+                # Add hover annotations
+                from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+                
+                # Label axes and title
+                plt.xlabel('Category')
+                plt.ylabel('Amount')
+                plt.title('Above-Average Expenses by Category')
+                plt.xticks(range(len(all_categories)), all_categories)
+                plt.grid(True, linestyle='--', alpha=0.3)
+                
+                # Add legend
+                plt.colorbar(scatter, label='Percentage Above Average')
+                plt.legend()
+                
+                # Display the plot
+                plt.tight_layout()
+                plt.show()
+                
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating report: {e}")

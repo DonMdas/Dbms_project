@@ -25,6 +25,10 @@ class CSVOperations:
                     
                 success_count = 0
                 error_count = 0
+                duplicate_count = 0
+                
+                # Keep track of imported expenses to detect duplicates
+                imported_expenses = set()
                 
                 for i, row in enumerate(reader, 2):  # Start counting from line 2 (after header)
                     if len(row) < 6:
@@ -36,17 +40,49 @@ class CSVOperations:
                     payment_detail_identifier = ""
                     if len(row) == 7:
                         payment_detail_identifier = row[6]
+                    
+                    # Normalize data for duplicate checking
+                    category_norm = category.strip().lower()
+                    payment_method_norm = payment_method.strip().lower()
+                    tag_norm = tag.strip().lower()
+                    
+                    # Create a unique identifier for this expense
+                    expense_key = (
+                        float(amount), 
+                        category_norm, 
+                        payment_method_norm, 
+                        date.strip(), 
+                        description.strip(), 
+                        tag_norm
+                    )
+                    
+                    # Check if this expense is already in our imported set
+                    if expense_key in imported_expenses:
+                        print(f"Skipping row {i}: Duplicate expense detected.")
+                        duplicate_count += 1
+                        continue
                         
                     # Call addexpense and check return value
-                    result = self.expense_manager.addexpense(amount, category.strip().lower(), payment_method.strip().lower(),
-                                            date, description, tag.strip().lower(), payment_detail_identifier, import_fn=1)
+                    result = self.expense_manager.addexpense(
+                        amount, 
+                        category_norm, 
+                        payment_method_norm,
+                        date, 
+                        description, 
+                        tag_norm, 
+                        payment_detail_identifier, 
+                        import_fn=1
+                    )
+                    
                     if result:
                         success_count += 1
+                        # Add to our tracking set after successful import
+                        imported_expenses.add(expense_key)
                     else:
                         error_count += 1
                         print(f"Failed to import row {i}")
                         
-                print(f"Import complete: {success_count} successful, {error_count} failed.")
+                print(f"Import complete: {success_count} successful, {error_count} failed, {duplicate_count} duplicates skipped.")
                 return True
                 
         except FileNotFoundError:
