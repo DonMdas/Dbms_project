@@ -17,7 +17,8 @@ list_of_privileges = {
             "highest_spender_per_month": "report highest_spender_per_month",
             "frequent_category": "report frequent_category",
             "tag_expenses": "report tag_expenses",
-            "payment_method_usage": "report payment_method_usage"
+            "payment_method_usage": "report payment_method_usage",
+            "analyze_expenses": "report analyze_expenses [<field> <operator> <value>, ...]"
         }
     },
     "user": {
@@ -37,7 +38,8 @@ list_of_privileges = {
             "payment_method_usage": "report payment_method_usage",
             "frequent_category": "report frequent_category",
             "tag_expenses": "report tag_expenses",
-            "payment_method_details_expense": "report payment_method_details_expense"
+            "payment_method_details_expense": "report payment_method_details_expense",
+            "analyze_expenses": "report analyze_expenses [<field> <operator> <value>, ...]"
         }
     }
 }

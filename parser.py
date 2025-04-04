@@ -205,6 +205,8 @@ class CommandParser:
                                 field_dict[field].append([op, value])
                                 operator_found = True
                                 break
+                            else:
+                                print("Error : Invalid Filter !!")
                     
                     if not operator_found:
                         print(f"Error: No valid operator found in filter '{constraint}'")
@@ -342,6 +344,57 @@ class CommandParser:
                     print("Error: No additional arguments required")
                 else:
                     self.report_manager.generate_report_payment_method_details_expense()
+                    
+            elif report_type == "analyze_expenses":
+                field_dict = {
+                    "amount": [],
+                    "date": [],
+                    "category": [],
+                    "tag": [],
+                    "payment_method": [],
+                    "month": []
+                }
+                
+                field_op = ["<=",">=","=","<",">"]
+                
+                # Check if there are filter arguments
+                if len(cmd_str_lst) > 2:
+                    # Extract everything after "report analyze_expenses"
+                    filter_part = cmd_str[cmd_str.find(report_type) + len(report_type):].strip()
+                    
+                    # Split by comma to get individual constraints
+                    constraint_list = filter_part.split(',')
+                    
+                    for constraint in constraint_list:
+                        constraint = constraint.strip()
+                        operator_found = False
+                        
+                        # Try each operator to see if it exists in the constraint
+                        for op in field_op:
+                            if op in constraint:
+                                # Split by operator
+                                parts = constraint.split(op, 1)  # Split only on first occurrence
+                                if len(parts) == 2:
+                                    field = parts[0].strip()
+                                    value = parts[1].strip()
+                                    
+                                    # Validate field
+                                    if field not in field_dict:
+                                        print(f"Error: Invalid field '{field}'")
+                                        return
+                                    
+                                    # Add to field_dict
+                                    field_dict[field].append([op, value])
+                                    operator_found = True
+                                    break
+                        
+                        if not operator_found:
+                            print(f"Error: No valid operator found in filter '{constraint}'")
+                            return
+                    
+                    self.report_manager.generate_expenses_analytics(field_dict)
+                else:
+                    self.report_manager.generate_expenses_analytics()
 
         else:
             print("Error: Invalid command")

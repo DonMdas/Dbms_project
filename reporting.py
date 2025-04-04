@@ -458,10 +458,7 @@ class ReportManager:
             return details[0:2] + '*' * (len(details) - 4) + details[-2:]
     
     def generate_report_payment_method_usage(self):
-        """Report spending breakdown by payment method (user only)"""
-        if self.privileges == "admin":
-            print("Error: Payment method details are not available for administrators.")
-            return
+        """Report spending breakdown by payment method"""
             
         try:
             query = """
@@ -471,12 +468,18 @@ class ReportManager:
             JOIN payment_method_expense pme ON pm.payment_method_id = pme.payment_method_id
             JOIN Expense e ON pme.expense_id = e.expense_id
             JOIN user_expense ue ON e.expense_id = ue.expense_id
-            WHERE ue.username = ?
-            GROUP BY pm.payment_method_name
-            ORDER BY total_amount DESC
             """
             
-            self.cursor.execute(query, (self.current_user,))
+            params = []
+            if self.privileges != "admin":
+                query += " WHERE ue.username = ? "
+                params.append(self.current_user)
+                
+            
+            query += """GROUP BY pm.payment_method_name
+            ORDER BY total_amount DESC"""
+                        
+            self.cursor.execute(query, params)
             results = self.cursor.fetchall()
             
             if not results:
@@ -1012,3 +1015,427 @@ class ReportManager:
             print(f"Database error: {e}")
         except Exception as e:
             print(f"Error generating report: {e}")
+
+    def generate_report_tag_expenses(self):
+        """Report number of expenses for each tag"""
+        try:
+            # Base query
+            query = """
+            SELECT t.tag_name, COUNT(te.expense_id) as usage_count, SUM(e.amount) as total_amount
+            FROM Tags t
+            JOIN tag_expense te ON t.tag_id = te.tag_id
+            JOIN Expense e ON te.expense_id = e.expense_id
+            JOIN user_expense ue ON e.expense_id = ue.expense_id
+            """
+            
+            params = []
+            
+            # Apply user filtering for regular users
+            if self.privileges != "admin":
+                query += " WHERE ue.username = ?"
+                params.append(self.current_user)
+                
+            query += " GROUP BY t.tag_name ORDER BY usage_count DESC"
+            
+            self.cursor.execute(query, params)
+            results = self.cursor.fetchall()
+            
+            if not results:
+                print("No tag usage data available.")
+                return
+                
+            # Display results
+            print("\nTag Usage Report:")
+            print("-" * 60)
+            print(f"{'Tag':<20} {'Usage Count':<15} {'Total Amount':<15} {'Avg Amount':<15}")
+            print("-" * 60)
+            
+            for tag, count, total in results:
+                avg_amount = total / count
+                print(f"{tag:<20} {count:<15} {total:<15.2f} {avg_amount:<15.2f}")
+                
+            print("-" * 60)
+            
+            # Create a horizontal bar chart for counts
+            if results:
+                # Create figure with single plot
+                plt.figure(figsize=(10, 8))
+                
+                # Extract data for plotting
+                tags = [result[0] for result in results]
+                counts = [result[1] for result in results]
+                amounts = [result[2] for result in results]
+                
+                # Sort data by count for better visualization
+                sorted_data = sorted(zip(tags, counts, amounts), key=lambda x: x[1])
+                tags = [x[0] for x in sorted_data]
+                counts = [x[1] for x in sorted_data]
+                
+                # Bar chart for usage count
+                plt.barh(tags, counts, color='teal')
+                plt.xlabel('Usage Count')
+                plt.title('Tag Usage Frequency')
+                
+                # Add count labels
+                for i, v in enumerate(counts):
+                    plt.text(v + 0.1, i, str(v), va='center')
+                
+                plt.tight_layout()
+                plt.show(block=False)
+                plt.pause(0.001)
+                
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating report: {e}")
+            
+    def generate_expenses_analytics(self, filters=None):
+        """Generate a dashboard with analytics for expenses using the same filtering logic as list_expenses"""
+        try:
+            # Initial query to connect all required tables - EXACT SAME as list_expenses
+            query = """
+            SELECT e.expense_id, e.date, e.amount, e.description, 
+                c.category_name, t.tag_name, pm.payment_method_name, ue.username,
+                pme.payment_detail_identifier
+            FROM Expense e
+            LEFT JOIN category_expense ce ON e.expense_id = ce.expense_id
+            LEFT JOIN Categories c ON ce.category_id = c.category_id
+            LEFT JOIN tag_expense te ON e.expense_id = te.expense_id
+            LEFT JOIN Tags t ON te.tag_id = t.tag_id
+            LEFT JOIN payment_method_expense pme ON e.expense_id = pme.expense_id
+            LEFT JOIN Payment_Method pm ON pme.payment_method_id = pm.payment_method_id
+            LEFT JOIN user_expense ue ON e.expense_id = ue.expense_id
+            """
+            
+            params = []
+            
+            # Check if current user is admin or regular user - SAME as list_expenses
+            if self.privileges != "admin":
+                # Regular user can only see their own expenses
+                query += """
+                WHERE e.expense_id IN (
+                    SELECT expense_id FROM user_expense WHERE username = ?
+                )
+                """
+                params.append(self.current_user)
+            
+            # Define operation fields - SAME as list_expenses
+            op_fields = {"and": ["amount", "date"], 
+                        "or": ["category", "tag", "payment_method", "month"]}
+            
+            # Month name to number mapping - SAME as list_expenses
+            month_mapping = {
+                "january": "01", "february": "02", "march": "03", "april": "04",
+                "may": "05", "june": "06", "july": "07", "august": "08",
+                "september": "09", "october": "10", "november": "11", "december": "12"
+            }
+            
+            # Process filters - SAME LOGIC as list_expenses
+            if filters:
+                for field in filters:
+                    if not filters[field]:  # Skip empty filter lists
+                        continue
+                        
+                    if field in op_fields["and"]:
+                        op = "AND"
+                    else:
+                        op = "OR"
+                        
+                    # Special handling for month - SAME as list_expenses
+                    if field == "month":
+                        connector = "WHERE" if "WHERE" not in query else "AND"
+                        query += f" {connector} ("
+                        first = True
+                        for constraint in filters[field]:
+                            op_type, value = constraint
+                            if not first:
+                                query += f" {op} "
+                            first = False
+                            
+                            # Handle month name conversion
+                            if isinstance(value, str) and value.lower() in month_mapping:
+                                month_num = month_mapping[value.lower()]
+                                query += f"strftime('%m', e.date) {op_type} ?"
+                                params.append(month_num)
+                            else:
+                                # Assume it's a number
+                                query += f"strftime('%m', e.date) {op_type} ?"
+                                # Ensure month is zero-padded
+                                if isinstance(value, str) and len(value) == 1:
+                                    params.append(value.zfill(2))
+                                else:
+                                    params.append(value)
+                        query += ")"
+                        continue
+                        
+                    # Handle regular fields with mapping to actual DB columns - SAME as list_expenses
+                    field_mapping = {
+                        "amount": "e.amount",
+                        "date": "e.date",
+                        "category": "c.category_name",
+                        "tag": "t.tag_name",
+                        "payment_method": "pm.payment_method_name"
+                    }
+                    
+                    db_field = field_mapping.get(field, field)
+                    
+                    connector = "WHERE" if "WHERE" not in query else "AND"
+                    query += f" {connector} ("
+                    first = True
+                    for constraint in filters[field]:
+                        op_type, value = constraint
+                        if not first:
+                            query += f" {op} "
+                        first = False
+                        query += f"{db_field} {op_type} ?"
+                        params.append(value)
+                    query += ")"
+            
+            # Order by date descending - common practice in expense reports
+            query += " ORDER BY e.date DESC"
+            
+            # Execute the query and fetch results
+            self.cursor.execute(query, params)
+            expenses = self.cursor.fetchall()
+            
+            if not expenses:
+                print("No expenses found matching the criteria.")
+                return
+            
+            # Display summary information
+            total_amount = sum(expense[2] for expense in expenses)
+            avg_amount = total_amount / len(expenses)
+            max_amount = max(expense[2] for expense in expenses)
+            min_amount = min(expense[2] for expense in expenses)
+            
+            print("\nExpense Analytics Dashboard")
+            print("-" * 80)
+            print(f"Total expenses found: {len(expenses)}")
+            print(f"Total amount: ${total_amount:.2f}")
+            print(f"Average amount: ${avg_amount:.2f}")
+            print(f"Maximum amount: ${max_amount:.2f}")
+            print(f"Minimum amount: ${min_amount:.2f}")
+            print("-" * 80)
+            
+            # Prepare data for visualizations
+            categories = {}
+            payment_methods = {}
+            tags = {}
+            dates = {}
+            months = {}
+            
+            for expense in expenses:
+                expense_id, date, amount, description, category, tag, payment_method, username, payment_detail = expense
+                
+                # Group by date (for time series)
+                year_month = date[:7]  # Extract YYYY-MM
+                if year_month not in dates:
+                    dates[year_month] = 0
+                dates[year_month] += amount
+                
+                # Also group by month name for month-based analysis
+                month_num = date[5:7]  # Extract MM
+                month_name = next((k for k, v in month_mapping.items() if v == month_num), month_num)
+                if month_name not in months:
+                    months[month_name] = 0
+                months[month_name] += amount
+                
+                # Group by category
+                if category:
+                    if category not in categories:
+                        categories[category] = {"count": 0, "total": 0}
+                    categories[category]["count"] += 1
+                    categories[category]["total"] += amount
+                
+                # Group by payment method
+                if payment_method:
+                    if payment_method not in payment_methods:
+                        payment_methods[payment_method] = {"count": 0, "total": 0}
+                    payment_methods[payment_method]["count"] += 1
+                    payment_methods[payment_method]["total"] += amount
+                
+                # Group by tag
+                if tag:
+                    if tag not in tags:
+                        tags[tag] = {"count": 0, "total": 0}
+                    tags[tag]["count"] += 1
+                    tags[tag]["total"] += amount
+            
+            # Create visualizations
+            import matplotlib.pyplot as plt
+            from matplotlib.gridspec import GridSpec
+            import numpy as np
+            from matplotlib.ticker import FuncFormatter
+            
+            # Create figure with six panels using GridSpec for flexible layout
+            fig = plt.figure(figsize=(15, 12))
+            gs = GridSpec(3, 6, figure=fig)
+            
+            plt.suptitle('Expense Analytics Dashboard', fontsize=16, fontweight='bold')
+            
+            # 1. Key Metrics Panel
+            ax_metrics = fig.add_subplot(gs[0, :2])
+            ax_metrics.axis('off')
+            
+            # Add a styled metrics panel with key statistics
+            metrics_text = (
+                f"EXPENSE SUMMARY\n\n"
+                f"Total: ${total_amount:.2f}\n"
+                f"Average: ${avg_amount:.2f}\n"
+                f"Maximum: ${max_amount:.2f}\n"
+                f"Minimum: ${min_amount:.2f}\n"
+                f"Count: {len(expenses)}\n"
+            )
+            
+            ax_metrics.text(0.5, 0.5, metrics_text, 
+                        ha='center', va='center', 
+                        fontsize=12,
+                        bbox=dict(boxstyle="round,pad=0.5", 
+                                    facecolor='lightblue', 
+                                    alpha=0.3))
+            
+            # 2. Spending Time Series
+            ax_time = fig.add_subplot(gs[0, 2:])
+            
+            # Sort dates for time series
+            sorted_dates = sorted(dates.keys())
+            amounts_by_date = [dates[date] for date in sorted_dates]
+            
+            # Plot time series
+            ax_time.plot(sorted_dates, amounts_by_date, marker='o', linewidth=2, color='blue')
+            ax_time.set_title('Spending Over Time')
+            ax_time.set_xlabel('Month')
+            ax_time.set_ylabel('Amount ($)')
+            ax_time.tick_params(axis='x', rotation=45)
+            ax_time.grid(True, linestyle='--', alpha=0.7)
+            
+            # Format y-axis as currency
+            ax_time.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'${x:.0f}'))
+            
+            # 3. Category Breakdown - Pie Chart
+            ax_cat_pie = fig.add_subplot(gs[1, :3])
+            
+            if categories:
+                cat_names = list(categories.keys())
+                cat_totals = [categories[cat]["total"] for cat in cat_names]
+                
+                # Create pie chart
+                wedges, texts, autotexts = ax_cat_pie.pie(
+                    cat_totals, 
+                    labels=cat_names,
+                    autopct='%1.1f%%',
+                    startangle=90,
+                    wedgeprops={'edgecolor': 'w', 'linewidth': 1}
+                )
+                
+                # Style the percentage text
+                for autotext in autotexts:
+                    autotext.set_fontsize(9)
+                    autotext.set_fontweight('bold')
+                    
+                ax_cat_pie.set_title('Spending by Category')
+                ax_cat_pie.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
+            else:
+                ax_cat_pie.text(0.5, 0.5, "No category data available", ha='center', va='center')
+                ax_cat_pie.axis('off')
+            
+            # 4. Monthly Spending - Bar Chart
+            ax_monthly = fig.add_subplot(gs[1, 3:])
+            
+            if months:
+                # Sort months by calendar order
+                month_order = ["january", "february", "march", "april", "may", "june", 
+                            "july", "august", "september", "october", "november", "december"]
+                # Filter to only include months that are in our data
+                sorted_months = [m for m in month_order if m in months]
+                month_amounts = [months[m] for m in sorted_months]
+                
+                # Create bar chart
+                bars = ax_monthly.bar(sorted_months, month_amounts, color='skyblue')
+                ax_monthly.set_title('Monthly Spending')
+                ax_monthly.set_xlabel('Month')
+                ax_monthly.set_ylabel('Amount ($)')
+                ax_monthly.tick_params(axis='x', rotation=45)
+                
+                # Format y-axis as currency
+                ax_monthly.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'${x:.0f}'))
+                
+                # Add amount labels to bars
+                for bar in bars:
+                    height = bar.get_height()
+                    ax_monthly.annotate(f'${height:.0f}',
+                                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                                    xytext=(0, 3),
+                                    textcoords="offset points",
+                                    ha='center', va='bottom',
+                                    rotation=45)
+            else:
+                ax_monthly.text(0.5, 0.5, "No monthly data available", ha='center', va='center')
+                ax_monthly.axis('off')
+            
+            # 5. Amount Distribution - Histogram
+            ax_hist = fig.add_subplot(gs[2, :3])
+            
+            amounts = [expense[2] for expense in expenses]
+            
+            # Create histogram with appropriate bins
+            bins = min(20, len(set(amounts)))
+            ax_hist.hist(amounts, bins=bins, alpha=0.7, color='lightgreen', edgecolor='black')
+            ax_hist.set_title('Amount Distribution')
+            ax_hist.set_xlabel('Amount ($)')
+            ax_hist.set_ylabel('Frequency')
+            
+            # Add a vertical line for the average
+            ax_hist.axvline(avg_amount, color='red', linestyle='dashed', linewidth=1)
+            ax_hist.text(
+                avg_amount, 
+                ax_hist.get_ylim()[1] * 0.9, 
+                f'Avg: ${avg_amount:.2f}', 
+                color='red',
+                ha='center', 
+                va='center',
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
+            )
+            
+            # 6. Payment Method Distribution
+            ax_payment = fig.add_subplot(gs[2, 3:])
+            
+            if payment_methods:
+                # Sort payment methods by count
+                sorted_methods = sorted(payment_methods.items(), key=lambda x: x[1]["count"], reverse=True)
+                
+                method_names = [method[0] for method in sorted_methods]
+                method_counts = [method[1]["count"] for method in sorted_methods]
+                
+                # Create horizontal bar chart with colorful bars
+                colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(method_names)))
+                bars = ax_payment.barh(method_names, method_counts, color=colors)
+                
+                ax_payment.set_title('Payment Method Usage')
+                ax_payment.set_xlabel('Number of Expenses')
+                
+                # Add count labels to bars
+                for i, bar in enumerate(bars):
+                    width = bar.get_width()
+                    ax_payment.text(
+                        width + 0.3, 
+                        bar.get_y() + bar.get_height()/2, 
+                        f'{width:.0f}',
+                        ha='left', 
+                        va='center',
+                        fontweight='bold'
+                    )
+            else:
+                ax_payment.text(0.5, 0.5, "No payment method data available", ha='center', va='center')
+                ax_payment.axis('off')
+            
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93)  # Adjust for main title
+            
+            plt.show(block=False)
+            plt.pause(0.001)
+            
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        except Exception as e:
+            print(f"Error generating analytics dashboard: {e}")
