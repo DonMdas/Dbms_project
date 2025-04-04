@@ -57,16 +57,20 @@ class UserManager:
             return False
         
     def list_users(self):
-        self.cursor.execute("Select username from User")
+        self.cursor.execute("SELECT username, role_name FROM user_role u, role r WHERE u.role_id = r.role_id")
         users = self.cursor.fetchall()
         
         if not users:
             print("No users found!!")
         else:
-            print("User:")
-            print("-" * 20)
+            print("\nUser List:")
+            print("-" * 35)
+            print(f"{'Username':<20} {'Role':<15}")
+            print("-" * 35)
             for user in users:
-                print(f"- {user[0]}")
+                username, role = user
+                print(f"{username:<20} {role:<15}")
+            print("-" * 35)
         return True
         
     def help(self, current_privileges, list_of_privileges):
